@@ -1,35 +1,37 @@
 import { useState, useEffect } from "react";
 import { recommendations } from "./data/recommendations";
-
-const STORAGE_KEY = "shopping-list-items";
-
-function useLocalStorage(key, initial) {
-  const [state, setState] = useState(() => {
-    try {
-      const saved = localStorage.getItem(key);
-      return saved ? JSON.parse(saved) : initial;
-    } catch {
-      return initial;
-    }
-  });
-
-  useEffect(() => {
-    localStorage.setItem(key, JSON.stringify(state));
-  }, [key, state]);
-
-  return [state, setState];
-}
+import { supabase } from "./supabase";
 
 export default function App() {
-  const [items, setItems] = useLocalStorage(STORAGE_KEY, []);
+  const [items, setItems] = useState([]);
   const [input, setInput] = useState("");
   const [activeTab, setActiveTab] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-  function addItem(name) {
+  useEffect(() => {
+    fetchItems();
+  }, []);
+
+  async function fetchItems() {
+    const { data, error } = await supabase
+      .from("shopping_items")
+      .select("*")
+      .order("created_at", { ascending: true });
+    if (!error) setItems(data);
+    setLoading(false);
+  }
+
+  async function addItem(name) {
     const trimmed = name.trim();
     if (!trimmed) return;
     if (items.some((i) => i.name === trimmed)) return;
-    setItems((prev) => [...prev, { id: Date.now(), name: trimmed, checked: false }]);
+
+    const { data, error } = await supabase
+      .from("shopping_items")
+      .insert({ name: trimmed, checked: false })
+      .select()
+      .single();
+    if (!error) setItems((prev) => [...prev, data]);
     setInput("");
   }
 
@@ -37,18 +39,32 @@ export default function App() {
     if (e.key === "Enter") addItem(input);
   }
 
-  function toggleItem(id) {
-    setItems((prev) =>
-      prev.map((i) => (i.id === id ? { ...i, checked: !i.checked } : i))
-    );
+  async function toggleItem(id, checked) {
+    const { error } = await supabase
+      .from("shopping_items")
+      .update({ checked: !checked })
+      .eq("id", id);
+    if (!error)
+      setItems((prev) =>
+        prev.map((i) => (i.id === id ? { ...i, checked: !checked } : i))
+      );
   }
 
-  function deleteItem(id) {
-    setItems((prev) => prev.filter((i) => i.id !== id));
+  async function deleteItem(id) {
+    const { error } = await supabase
+      .from("shopping_items")
+      .delete()
+      .eq("id", id);
+    if (!error) setItems((prev) => prev.filter((i) => i.id !== id));
   }
 
-  function clearChecked() {
-    setItems((prev) => prev.filter((i) => !i.checked));
+  async function clearChecked() {
+    const checkedIds = items.filter((i) => i.checked).map((i) => i.id);
+    const { error } = await supabase
+      .from("shopping_items")
+      .delete()
+      .in("id", checkedIds);
+    if (!error) setItems((prev) => prev.filter((i) => !i.checked));
   }
 
   const checkedCount = items.filter((i) => i.checked).length;
@@ -60,7 +76,9 @@ export default function App() {
         <div className="text-center mb-6 pt-4">
           <h1 className="text-3xl font-bold text-emerald-800">🛒 쇼핑 리스트</h1>
           <p className="text-emerald-600 mt-1 text-sm">
-            {items.length === 0
+            {loading
+              ? "불러오는 중..."
+              : items.length === 0
               ? "항목을 추가해보세요"
               : `총 ${items.length}개 · 완료 ${checkedCount}개`}
           </p>
@@ -86,7 +104,11 @@ export default function App() {
 
         {/* Shopping List */}
         <div className="bg-white rounded-2xl shadow-sm border border-emerald-100 mb-4 overflow-hidden">
-          {items.length === 0 ? (
+          {loading ? (
+            <div className="py-10 text-center text-gray-400 text-sm">
+              데이터를 불러오는 중...
+            </div>
+          ) : items.length === 0 ? (
             <div className="py-10 text-center text-gray-400 text-sm">
               아직 항목이 없어요.<br />아래 추천 리스트에서 추가해보세요!
             </div>
@@ -100,7 +122,7 @@ export default function App() {
                   }`}
                 >
                   <button
-                    onClick={() => toggleItem(item.id)}
+                    onClick={() => toggleItem(item.id, item.checked)}
                     className={`w-6 h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
                       item.checked
                         ? "bg-emerald-500 border-emerald-500 text-white"
